@@ -1,6 +1,7 @@
 # Contributing
 
-欢迎提交 issue 与 PR。这个项目的很多约束来自 DSH 自身的实现细节，**动手前请先读
+欢迎提交 issue。本仓库**不接受 Pull Request**（新开的 PR 会被自动关闭），请用 issue
+描述问题或建议。这个项目的很多约束来自 DSH 自身的实现细节，**动手前请先读
 [`DESIGN.md`](./DESIGN.md)**（尤其是 §5 的硬约束和 §7 的宿主半边设计），能省掉不少返工。
 
 ## 环境
@@ -57,9 +58,9 @@ npm run dist:dir:nosign  # 构建 app/dist/win-unpacked
   `README.md` / `DESIGN.md` / 本文件。
 - **提交前**：`npm test` 必须全绿，`npm run check-protocol` 必须通过。
 
-## 提交 issue / PR
+## 提交 issue
 
-- 一个 PR 只做一件事；说明改了什么、为什么、怎么验证的。
+- 一个 issue 只描述一件事；说明现象、复现步骤和期望行为。
 - UI 问题请附截图或录屏；行为问题请附 DSH 版本、`host.log` 相关片段。
 - 不要提交 `node_modules/`、`app/dist/`、`.tmp-test/` 等本地产物，见 [`.gitignore`](./.gitignore)。
 

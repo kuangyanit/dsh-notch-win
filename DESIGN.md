@@ -655,6 +655,7 @@ dsh-notch-win/
 ├─ THIRD_PARTY_NOTICES.md       # 第三方版权与许可声明
 ├─ .gitignore
 ├─ .gitattributes               # 文本行尾与二进制资源
+├─ .github/workflows/close-pr.yml  # 自动关闭 PR（仓库只接受 issue）
 ├─ package.json                 # @dsh-external/dsh-notch-win, type: module
 ├─ dsh.plugin.json              # { id: "dsh-notch-win", main: "./lib/index.js" }
 ├─ cordis.patch.yml             # - insert: [{ id: notch-win, name: '@dsh-external/dsh-notch-win' }]

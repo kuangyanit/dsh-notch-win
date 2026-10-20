@@ -237,7 +237,8 @@ npm run check-protocol   # 断言生成物与源文件字节一致（CI 用）
 
 ## 贡献
 
-见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。改动前请先跑一遍 `npm test`，并保持
+见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。本仓库只接受 issue，**不接受 Pull Request**；
+新开的 PR 会被自动关闭。改动前请先跑一遍 `npm test`，并保持
 `lib/protocol.js` → `app/src/protocol.cjs` 的生成物同步（`npm run check-protocol`）。
 
 ## License

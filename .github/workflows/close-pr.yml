@@ -1,0 +1,42 @@
+name: Close pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close and explain
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            async function close(number) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: number,
+                body: '本仓库不接受 Pull Request，请改为提交 Issue。\n\nThis repository does not accept pull requests; please open an issue instead.',
+              });
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: number,
+                state: 'closed',
+              });
+            }
+
+            if (context.eventName === 'workflow_dispatch') {
+              const { data: pulls } = await github.rest.pulls.list({ owner, repo, state: 'open', per_page: 100 });
+              for (const pull of pulls) await close(pull.number);
+            } else {
+              await close(context.payload.pull_request.number);
+            }
