@@ -1,0 +1,39 @@
+{
+  "name": "dsh-notch-app",
+  "productName": "DSHNotch",
+  "version": "0.1.0",
+  "description": "DSH 灵动岛 · Windows 顶层窗口（只负责画）",
+  "author": "kuangyanit",
+  "license": "MIT",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64",
+    "dist:dir": "electron-builder --win --x64 --dir",
+    "dist:dir:nosign": "electron-builder --win --x64 --dir --config.win.signAndEditExecutable=false",
+    "gen-protocol": "node ../scripts/gen-app-protocol.mjs"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.dshnotch.windows",
+    "productName": "DSHNotch",
+    "icon": "assets/icon.ico",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "dir"
+      ]
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# dsh-notch-win bundle patch
+# 宿主半边注册进 DSH 的 Cordis 插件栈。
+# 渲染半边（lib/client.js）由 package.json 的 dsh.client.inject + ModuleLoader 自动加载，
+# 这里不需要、也不能重复声明它。
+- insert:
+    - id: notch-win
+      name: '@dsh-external/dsh-notch-win'
+      config: {}

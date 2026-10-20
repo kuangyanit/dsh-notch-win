@@ -1,0 +1,12 @@
+{
+  "id": "dsh-notch-win",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "DeepSeek Harness Windows 灵动岛：状态在宿主进程计算，顶层桌面 app 只负责画",
+  "license": "MIT",
+  "repository": "https://github.com/kuangyanit/dsh-notch-win",
+  "engines": {
+    "dsh": ">=0.0.1"
+  },
+  "contributes": {}
+}

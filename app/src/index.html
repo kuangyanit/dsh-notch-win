@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DSHNotch</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!--
+    岛的本体。
+
+    窗口按**最大展开态**一次开好（app/src/main.js 的 MAX_WINDOW）。岛顶对齐钉在
+    窗口顶端、水平居中，展开/收起只是它在窗口内部改自己的宽高 —— 窗口一个字节
+    都不动，动画就不会被 DWM 的窗口尺寸变化拖累。
+
+    ## 结构
+
+      .island           尺寸与形变（width 由 data-expanded 驱动，弹簧在 CSS 里）
+        .clip           黑色底 + 圆角 + overflow 裁剪
+          .band         状态色内发光带（纯装饰，glowEffect 门控）
+          .body         内容区
+            #hdr        折叠/展开共用：状态点 + 状态徽标 + 标题 + 耗时
+            #hud        展开态：待办 / 会话列表 / 统计 / 页脚
+
+    ## 点击穿透
+
+    窗口平时 setIgnoreMouseEvents(true, {forward:true})：只有指针真的落进岛的矩形
+    里，渲染层才请主进程临时接管；出岛立刻恢复。主进程另有 500ms 看门狗兜底。
+
+    ## 渲染纪律（v2 与旧实现最大的差别）
+
+    骨架只创建一次，之后**只改文本与属性**。会话行按 id 复用 DOM 节点。
+    旧实现每次快照都 innerHTML 重建整块界面：340ms 的展开动画每拍被打断一次，
+    点过的行被销毁重建，悬停态一直闪。
+  -->
+  <div id="island" class="island"
+       data-status="idle"
+       data-expanded="0"
+       data-live="0"
+       data-glow="1"
+       data-offline="1"
+       data-pinned="0">
+
+    <div class="clip">
+      <div class="band" aria-hidden="true"></div>
+
+      <div id="body" class="body">
+        <!-- 一行表头：折叠/展开共用，只做当前会话的状态摘要，不可点 -->
+        <div id="hdr" class="hdr">
+          <span id="h-dot" class="dot"></span>
+          <span id="h-badge" class="badge">空闲</span>
+          <span id="h-workspace" class="workspace mono"></span>
+          <span id="h-title" class="h-title">DSH 待命</span>
+          <span id="h-elapsed" class="elapsed mono"></span>
+        </div>
+
+        <div class="hud">
+          <div id="todo" class="todo">
+            <span class="todo-ico" aria-hidden="true"></span>
+            <span id="todo-cur" class="cur"></span>
+            <span id="todo-prog" class="prog mono"></span>
+          </div>
+
+          <div id="list" class="list"></div>
+
+          <div id="stats" class="stats"></div>
+
+          <div class="footer">
+            <span id="link" class="link-text">未连接</span>
+            <span id="hint" class="hint"></span>
+            <button id="pin" class="pin" type="button" aria-pressed="false" title="鼠标离开后保持展开">保持展开</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>

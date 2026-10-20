@@ -1,0 +1,11 @@
+# 统一文本行尾，避免 Windows / macOS / Linux 协作时整文件 diff
+* text=auto eol=lf
+
+# 二进制资源
+*.png binary
+*.ico binary
+*.icns binary
+*.exe binary
+*.dll binary
+*.asar binary
+*.zip binary

@@ -1,0 +1,36 @@
+# 依赖（含 test 用的 @deepseek-ai/* junction，指向 ~/.dsh/profiles/node_modules）
+node_modules/
+
+# Electron 构建产物（DSHNotch.exe 就藏在这里面）
+app/dist/
+
+# 本地调试 / 验证脚本与截图
+.tmp-test/
+.tmp/
+*.local
+
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 环境变量（可能含密钥）；示例文件仍要提交
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# 测试覆盖率
+coverage/
+.nyc_output/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

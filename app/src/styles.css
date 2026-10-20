@@ -1,0 +1,409 @@
+/*
+ * 岛的外观。
+ *
+ * 三条约束：
+ * 1. 背景必须是**透明**的，只有 .clip 是实心黑 —— 窗口是 transparent 的，
+ *    任何多余的实心色都会变成一个黑方块贴在屏幕上。
+ * 2. 窗口一次开到最大展开态，展开/收起只改 .island 的 width 与 .clip 的
+ *    max-height，绝不碰窗口尺寸（否则每帧都在跟 DWM 的窗口动画打架）。
+ * 3. 状态色只经 `--accent` 一个变量流出去，`data-status` 决定它的值。
+ */
+
+:root {
+  --idle: #6b7280;
+  --thinking: #4e7cff;
+  --tool: #22c55e;
+  --done: #8b5cf6;
+
+  --mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+  --sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: #f2f4f8;
+}
+
+body {
+  /* 岛顶对齐钉在屏幕顶端、水平居中 —— 与 main.js 的 placeWindow 一致。 */
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+/* ───────────────────────────── 外壳 ───────────────────────────── */
+
+.island {
+  --accent: var(--idle);
+  position: relative;
+  width: 216px;
+  padding-top: 0;
+  transition: width 0.34s var(--ease);
+}
+
+/* 有工作区标签时折叠态也要宽一点，否则工作区与标题互相挤成残句。 */
+.island[data-workspace='1'] {
+  width: min(320px, calc(100vw - 24px));
+}
+
+.island[data-status='thinking'] {
+  --accent: var(--thinking);
+}
+.island[data-status='tool'] {
+  --accent: var(--tool);
+}
+.island[data-status='done'] {
+  --accent: var(--done);
+}
+.island[data-status='stopped'] {
+  --accent: #e0a800;
+}
+.island[data-offline='1'] {
+  --accent: var(--idle);
+}
+
+.island[data-expanded='1'] {
+  width: min(432px, calc(100vw - 24px));
+}
+
+.clip {
+  position: relative;
+  max-height: 34px;
+  overflow: hidden;
+  border-radius: 17px;
+  background: rgba(16, 17, 21, 0.86);
+  backdrop-filter: blur(22px) saturate(160%);
+  transition: max-height 0.34s var(--ease), border-radius 0.34s var(--ease),
+    box-shadow 0.2s linear;
+}
+
+.island[data-expanded='1'] .clip {
+  max-height: 452px;
+  border-radius: 20px;
+}
+
+.island[data-glow='1'] .clip {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 10px 30px rgba(0, 0, 0, 0.5),
+    0 0 26px -8px var(--accent);
+}
+
+.island[data-glow='0'] .clip {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* 顶部那道状态色：唯一"发光"的载体，glowEffect 关掉时直接不画。 */
+.band {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent) 22%, var(--accent) 78%, transparent);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.island[data-glow='0'] .band {
+  opacity: 0.45;
+}
+
+.island[data-live='1'][data-glow='1'] .band {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+.island[data-live='0'] .band {
+  opacity: 0.4;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px;
+}
+
+/* ───────────────────────────── 表头 ───────────────────────────── */
+
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  flex: none;
+  cursor: default;
+}
+
+.island[data-status='done'] .hdr,
+.island[data-status='stopped'] .hdr {
+  cursor: pointer;
+}
+
+.dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--idle);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+  transition: background 0.2s linear;
+}
+
+.island[data-live='1'][data-glow='1'] .hdr .dot {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06), 0 0 10px 1px var(--accent);
+}
+
+.badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* 工作区标签：弱化前缀，完整路径放 title；没有 cwd 的会话直接隐藏。 */
+.workspace {
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: rgba(242, 244, 248, 0.42);
+}
+
+.workspace:empty {
+  display: none;
+}
+
+.h-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.elapsed {
+  flex: none;
+  color: rgba(242, 244, 248, 0.62);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 折叠态：只收起 HUD；表头里的状态徽标要留着，否则未保持展开时看不到过程 */
+.island[data-expanded='0'] .hud {
+  display: none;
+}
+
+/* ───────────────────────────── 展开态 ───────────────────────────── */
+
+.hud {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.is-off {
+  display: none !important;
+}
+
+.todo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: rgba(242, 244, 248, 0.82);
+  font-size: 12px;
+}
+
+.todo-ico {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1.5px solid var(--accent);
+  align-self: center;
+}
+
+.todo .cur {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.todo .prog {
+  flex: none;
+  color: rgba(242, 244, 248, 0.62);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 216px;
+  overflow: hidden;
+  /* 给状态点的 3px 外圈留出裁剪空间；负 margin 保持行内容与表头对齐。 */
+  padding: 0 3px;
+  margin: 0 -3px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 水平 padding 给状态点外圈留空间；负 margin 让 hover 背景覆盖整行。 */
+  padding: 5px 3px;
+  margin: 0 -3px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s linear;
+}
+
+.row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* 行和表头同一套结构：dot → 状态徽标 → 工作区 → 标题 → 副信息 → 耗时。 */
+.row-workspace {
+  flex: none;
+  max-width: 34%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: rgba(242, 244, 248, 0.42);
+}
+
+.row-workspace:empty {
+  display: none;
+}
+
+.row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.row-sub {
+  flex: none;
+  color: rgba(242, 244, 248, 0.55);
+  font-size: 10px;
+}
+
+.row-meta {
+  flex: none;
+  text-align: right;
+  color: rgba(242, 244, 248, 0.62);
+}
+
+.stats {
+  color: rgba(242, 244, 248, 0.55);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+}
+
+.stats:empty {
+  display: none;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  color: rgba(242, 244, 248, 0.5);
+  font-size: 10.5px;
+}
+
+.link-text {
+  flex: none;
+  font-family: var(--mono);
+}
+
+.link-text.is-bad {
+  color: #e0a800;
+}
+
+.hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.hint.is-bad {
+  color: #e5484d;
+}
+
+.pin {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(242, 244, 248, 0.5);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: inherit;
+  cursor: pointer;
+  transition: color 0.12s linear;
+}
+
+.pin::before {
+  content: '·';
+  margin-right: 6px;
+  color: rgba(242, 244, 248, 0.3);
+}
+
+.pin:hover {
+  color: rgba(242, 244, 248, 0.92);
+}
+
+.pin.is-on {
+  color: rgba(242, 244, 248, 0.85);
+}
+
+/* 断线时整体压暗一点：一眼能看出"这不是没在干活，是没连上"。 */
+.island[data-offline='1'] .clip {
+  background: rgba(16, 17, 21, 0.72);
+}
+
+.island[data-offline='1'] .h-title {
+  color: rgba(242, 244, 248, 0.72);
+}
