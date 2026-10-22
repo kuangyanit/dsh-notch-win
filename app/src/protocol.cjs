@@ -80,7 +80,8 @@ const STATUS_RANK = exports.STATUS_RANK = {
   idle: 2,
 };
 
-const MAX_ENTRIES = exports.MAX_ENTRIES = 8;
+/** HUD 一次最多发送的条目数。与 SESSION_MAP_MAX 对齐，避免截断出“半棵树”。 */
+const MAX_ENTRIES = exports.MAX_ENTRIES = 64;
 const DONE_HOLD_MS = exports.DONE_HOLD_MS = 6000;
 const PUBLISH_THROTTLE_MS = exports.PUBLISH_THROTTLE_MS = 150;
 const DETAIL_MAX = exports.DETAIL_MAX = 120;

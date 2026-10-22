@@ -22,9 +22,13 @@
   const hWorkspace = el('h-workspace');
   const hTitle = el('h-title');
   const hElapsed = el('h-elapsed');
-  const todo = el('todo');
-  const todoCur = el('todo-cur');
+  const todosPanel = el('todos');
+  const todoList = el('todo-list');
   const todoProg = el('todo-prog');
+  const todoMore = el('todo-more');
+  const subagentsPanel = el('subagents');
+  const subagentList = el('subagent-list');
+  const subagentCount = el('subagent-count');
   const list = el('list');
   const stats = el('stats');
   const link = el('link');
@@ -35,6 +39,11 @@
 
   const BADGE = { idle: '空闲', thinking: '思考中', tool: '调用工具', done: '已完成', offline: '未连接' };
   const STATUS_LABEL = { idle: '空闲', thinking: '思考中', tool: '调用工具', done: '已完成' };
+  const TODO_STATUS = {
+    completed: { label: '已完成', color: '#22C55E' },
+    in_progress: { label: '进行中', color: '#4E7CFF' },
+    pending: { label: '待处理', color: '#E0A800' },
+  };
 
   /** 宿主快照。`null` 表示还没拿到第一拍。 */
   let snapshot = null;
@@ -99,16 +108,22 @@
     return lines.join('\n');
   }
 
-  /** 表头代表当前 DSH 会话：有 primaryId 就显示它（即使 idle）；否则 live/第一条。 */
-  function pickFocus(entries) {
+  /** 当前被 DSH 选中的会话（可能是子代理）。 */
+  function pickSelected(entries) {
     if (entries.length === 0) return null;
     const primaryId = snapshot ? snapshot.primaryId : null;
     if (primaryId) {
-      const primary = entries.find((entry) => entry.id === primaryId);
+      const primary = findEntry(entries, primaryId);
       if (primary) return primary;
     }
     const live = entries.find((entry) => entry.live === true);
     return live || entries[0];
+  }
+
+  /** 表头始终代表当前会话所在树的根，点击子代理不会改变主会话文案。 */
+  function pickFocus(entries) {
+    const selected = pickSelected(entries);
+    return selected ? rootOf(entries, selected) || selected : null;
   }
 
   function elapsedOf(entry, now) {
@@ -117,16 +132,168 @@
     return formatElapsed(now - entry.elapsedFrom);
   }
 
+  function bareId(value) {
+    const s = String(value ?? '');
+    return s.startsWith('session-') ? s.slice('session-'.length) : s;
+  }
+
+  function findEntry(entries, id) {
+    if (id === null || id === undefined) return null;
+    const bare = bareId(id);
+    return entries.find((entry) => bareId(entry.id) === bare) || null;
+  }
+
+  function displayName(entry) {
+    if (!entry) return '';
+    if (entry.isSubagent) return entry.subagentName || entry.subagentLabel || entry.label;
+    return entry.label;
+  }
+
+  /** 行/表头共用的状态映射：子代理有独立终态，不能只看 status。 */
+  function stateOf(entry) {
+    if (entry.subagentState === 'finished') return { status: 'done', text: '已完成', color: P.STATUS_COLOR.done };
+    if (entry.subagentState === 'stopped') return { status: 'stopped', text: '已停止', color: '#E0A800' };
+    if (entry.subagentState === 'failed') return { status: 'stopped', text: '失败', color: '#EF4444' };
+    if (entry.stopped) return { status: 'stopped', text: '已停止', color: '#E0A800' };
+    return {
+      status: entry.status,
+      text: STATUS_LABEL[entry.status] || entry.status,
+      color: entry.glow || P.STATUS_COLOR[entry.status] || P.STATUS_COLOR.idle,
+    };
+  }
+
+  function compareSiblings(a, b) {
+    const ca = Number.isFinite(a.createdAt) ? a.createdAt : Number.MAX_SAFE_INTEGER;
+    const cb = Number.isFinite(b.createdAt) ? b.createdAt : Number.MAX_SAFE_INTEGER;
+    if (ca !== cb) return ca - cb;
+    return String(a.shortId || a.id).localeCompare(String(b.shortId || b.id));
+  }
+
+  function childrenOf(entries, parent) {
+    if (!parent) return [];
+    const key = bareId(parent.id);
+    return entries
+      .filter((entry) => entry.parentId && bareId(entry.parentId) === key)
+      .sort(compareSiblings);
+  }
+
+  /** 父条目不在快照里的子代理归到这一组：宁可集中标注，也不能冒充顶级会话。 */
+  const ORPHAN_GROUP = {
+    id: '',
+    label: '父会话未加载',
+    isSubagent: false,
+    isOrphanGroup: true,
+    status: 'idle',
+    workspace: null,
+  };
+
+  /** 把平铺条目组成父子行；focus 根由表头承担，selected 子代理在行上高亮。 */
+  function buildTreeRows(entries, focus, selectedId, skipChildrenOfFocus = false) {
+    const skipId = focus ? focus.id : null;
+    const byBare = new Map(entries.map((entry) => [bareId(entry.id), entry]));
+    const children = new Map();
+    const roots = [];
+    const orphans = [];
+    for (const entry of entries) {
+      const parent = entry.parentId ? byBare.get(bareId(entry.parentId)) : null;
+      if (parent && parent.id !== entry.id) {
+        const key = bareId(parent.id);
+        if (!children.has(key)) children.set(key, []);
+        children.get(key).push(entry);
+      } else if (entry.isSubagent) {
+        // 父会话条目缺失（被回收 / 宿主还没补出来）：不能落进 roots，否则子代理
+        // 会顶着「已完成/已停止」出现在顶级会话里，层级和缩进全丢。
+        orphans.push(entry);
+      } else {
+        roots.push(entry);
+      }
+    }
+    const out = [];
+    for (const kids of children.values()) kids.sort(compareSiblings);
+
+    const activeRoot = focus ? rootOf(entries, focus) : null;
+    if (activeRoot) {
+      const index = roots.findIndex((root) => root.id === activeRoot.id);
+      if (index > 0) roots.unshift(roots.splice(index, 1)[0]);
+    }
+
+    const emit = (entry, depth, isLast) => {
+      if (entry.id !== skipId) {
+        out.push({
+          entry,
+          depth,
+          branch: depth > 0 ? (isLast ? '└' : '├') : '',
+          current: entry.id === selectedId,
+        });
+      }
+      if (skipChildrenOfFocus && entry.id === skipId) return;
+      const kids = (children.get(bareId(entry.id)) || []).filter((kid) => kid.id !== skipId);
+      kids.forEach((kid, index) => emit(kid, depth + 1, index === kids.length - 1));
+    };
+    roots.forEach((root, index) => emit(root, 0, index === roots.length - 1));
+    if (orphans.length > 0) {
+      orphans.sort(compareSiblings);
+      out.push({ entry: ORPHAN_GROUP, depth: 0, branch: '', current: false });
+      orphans.forEach((entry, index) => {
+        out.push({
+          entry,
+          depth: 1,
+          branch: index === orphans.length - 1 ? '└' : '├',
+          current: entry.id === selectedId,
+        });
+      });
+    }
+    return out;
+  }
+
+  /** 找到条目所在树的根（根会话或最早可见的祖先）。 */
+  function rootOf(entries, entry) {
+    if (!entry) return null;
+    const byBare = new Map(entries.map((item) => [bareId(item.id), item]));
+    let root = entry;
+    const seen = new Set();
+    while (root.parentId) {
+      const key = bareId(root.id);
+      if (seen.has(key)) break;
+      seen.add(key);
+      const parent = byBare.get(bareId(root.parentId));
+      if (!parent) break;
+      root = parent;
+    }
+    return root;
+  }
+
+  /** focus 所在的整棵树：根 + 所有后代，用于聚合待办。 */
+  function focusTree(entries, focus) {
+    if (!focus) return entries;
+    const byBare = new Map(entries.map((entry) => [bareId(entry.id), entry]));
+    const root = rootOf(entries, focus);
+    const out = [];
+    const visiting = new Set();
+    const walk = (entry) => {
+      const key = bareId(entry.id);
+      if (visiting.has(key) || out.includes(entry)) return;
+      visiting.add(key);
+      out.push(entry);
+      for (const candidate of entries) {
+        if (candidate.parentId && bareId(candidate.parentId) === key) walk(candidate);
+      }
+    };
+    walk(root);
+    return out;
+  }
+
   // ── 会话列表：按 id 复用行 ──
 
   const rows = new Map();
+  const subagentRows = new Map();
 
   function createRow() {
     const row = document.createElement('div');
     row.className = 'row';
-    // 和表头保持同一套顺序：dot → 状态徽标 → 工作区 → 标题 → 副信息 → 耗时。
+    // 顺序：层级枝 → 状态点 → 状态徽标 → 工作区 → 标题 → 副信息 → 当前 → 耗时。
     row.innerHTML =
-      '<span class="dot"></span><span class="badge row-badge"></span><span class="row-workspace mono"></span><span class="row-label"></span><span class="row-sub"></span><span class="row-meta mono"></span>';
+      '<span class="row-branch mono"></span><span class="dot"></span><span class="badge row-badge"></span><span class="row-workspace mono"></span><span class="row-label"></span><span class="row-sub"></span><span class="row-current"></span><span class="row-meta mono"></span>';
     row.addEventListener('click', (event) => {
       event.stopPropagation();
       void jumpTo(row.dataset.id);
@@ -134,51 +301,206 @@
     return row;
   }
 
-  function renderList(entries, now = Date.now()) {
+  function renderRows(container, store, items, now) {
     const seen = new Set();
-    entries.forEach((entry, index) => {
+    items.forEach(({ entry, depth, branch, current }, index) => {
       seen.add(entry.id);
-      let row = rows.get(entry.id);
+      let row = store.get(entry.id);
       if (!row) {
         row = createRow();
-        rows.set(entry.id, row);
+        store.set(entry.id, row);
       }
       row.dataset.id = entry.id;
-      row.dataset.status = entry.stopped ? 'stopped' : entry.status;
+      row.dataset.depth = String(depth);
+      row.dataset.subagent = entry.isSubagent ? '1' : '0';
+      row.dataset.current = current ? '1' : '0';
+      row.dataset.group = entry.isOrphanGroup ? '1' : '0';
+      const state = stateOf(entry);
+      row.dataset.status = state.status;
 
-      const colour = entry.glow || P.STATUS_COLOR[entry.status] || P.STATUS_COLOR.idle;
-      setStyle(row.querySelector('.dot'), 'background', colour);
+      setText(row.querySelector('.row-branch'), branch);
+      // 组标题不是会话：不挂状态点/徽标（`id` 为空，点击也不会跳转）。
+      setStyle(row.querySelector('.dot'), 'background', entry.isOrphanGroup ? P.STATUS_COLOR.idle : state.color);
       const badge = row.querySelector('.row-badge');
-      setText(badge, entry.stopped ? '已停止' : STATUS_LABEL[entry.status] || entry.status);
-      setStyle(badge, 'color', colour);
-      setStyle(badge, 'background', `color-mix(in srgb, ${colour} 22%, transparent)`);
+      setText(badge, entry.isOrphanGroup ? '' : state.text);
+      setStyle(badge, 'color', state.color);
+      setStyle(badge, 'background', entry.isOrphanGroup ? 'transparent' : `color-mix(in srgb, ${state.color} 22%, transparent)`);
+      toggleClass(badge, 'is-off', false);
 
       const workspaceNode = row.querySelector('.row-workspace');
       setText(workspaceNode, entry.workspace ? `${entry.workspace} /` : '');
       const workspaceTitle = entry.workspacePath || entry.workspace || '';
       if (workspaceNode.title !== workspaceTitle) workspaceNode.title = workspaceTitle;
 
-      setText(row.querySelector('.row-label'), entry.label);
+      const labelNode = row.querySelector('.row-label');
+      setText(labelNode, displayName(entry));
+      const labelTitle = entry.isSubagent
+        ? entry.subagentLabel || entry.subagentName || entry.label
+        : entry.label;
+      if (labelNode.title !== labelTitle) labelNode.title = labelTitle;
 
       const sub = [];
-      if (entry.subagentRunning > 0) sub.push(`子代理 ${entry.subagentRunning}`);
-      if (entry.todoTotal > 0) sub.push(`待办 ${entry.todoDone}/${entry.todoTotal}`);
+      if (!entry.isSubagent && entry.subagentRunning > 0) sub.push(`子代理 ${entry.subagentRunning}`);
       setText(row.querySelector('.row-sub'), sub.join(' · '));
+
+      const currentNode = row.querySelector('.row-current');
+      setText(currentNode, '当前');
+      toggleClass(currentNode, 'is-off', !current);
 
       setText(row.querySelector('.row-meta'), elapsedOf(entry, now));
 
-      const at = list.children[index] ?? null;
-      if (at !== row) list.insertBefore(row, at);
+      const at = container.children[index] ?? null;
+      if (at !== row) container.insertBefore(row, at);
     });
 
-    for (const [id, row] of [...rows]) {
+    for (const [id, row] of [...store]) {
       if (seen.has(id)) continue;
       row.remove();
-      rows.delete(id);
+      store.delete(id);
     }
   }
 
-  // ── 重画 ──
+  function renderList(items, now = Date.now()) {
+    renderRows(list, rows, items, now);
+  }
+
+  function renderSubagents(entries, focus, selectedId, offline, now = Date.now()) {
+    if (offline || !focus) {
+      toggleClass(subagentsPanel, 'is-off', true);
+      setText(subagentCount, '');
+      renderRows(subagentList, subagentRows, [], now);
+      return;
+    }
+    const children = childrenOf(entries, focus);
+    toggleClass(subagentsPanel, 'is-off', children.length === 0);
+    setText(subagentCount, children.length > 0 ? `${children.length}` : '');
+    const items = children.map((entry, index) => ({
+      entry,
+      depth: 1,
+      branch: index === children.length - 1 ? '└' : '├',
+      current: entry.id === selectedId,
+    }));
+    renderRows(subagentList, subagentRows, items, now);
+  }
+
+  // ── 待办：当前树（父 + 子代理）的聚合列表 ──
+
+  const todoRows = [];
+
+  function createTodoRow() {
+    const row = document.createElement('div');
+    row.className = 'todo-item';
+    row.innerHTML =
+      '<span class="todo-item-status"></span><span class="todo-item-text"></span><span class="todo-item-owner mono"></span>';
+    return row;
+  }
+
+  /** 中文/英文混合的轻量 token：ASCII 词 + 中文二元组。 */
+  function tokenize(text) {
+    const source = String(text ?? '').toLowerCase();
+    const tokens = new Set();
+    for (const match of source.matchAll(/[a-z0-9_/.-]{3,}/g)) tokens.add(match[0]);
+    for (const match of source.matchAll(/[\u4e00-\u9fff]{2,}/g)) {
+      const run = match[0];
+      for (let index = 0; index + 2 <= run.length; index += 1) tokens.add(run.slice(index, index + 2));
+    }
+    return tokens;
+  }
+
+  function similarity(left, right) {
+    const a = tokenize(left);
+    const b = tokenize(right);
+    if (a.size === 0 || b.size === 0) return 0;
+    let shared = 0;
+    for (const token of a) if (b.has(token)) shared += 1;
+    return shared / Math.sqrt(a.size * b.size);
+  }
+
+  function ownerSuffix(child) {
+    if (child.subagentState === 'finished') return ' ✓';
+    if (child.subagentState === 'stopped') return ' 已停止';
+    if (child.subagentState === 'failed') return ' 失败';
+    return '';
+  }
+
+  /** 父会话 todo 的语义关联：只做提示，不改变 todo 状态。 */
+  function inferOwner(content, children) {
+    let best = null;
+    let bestScore = 0;
+    let second = 0;
+    for (const child of children) {
+      const text = `${child.subagentLabel || ''} ${child.subagentName || ''}`;
+      const score = similarity(content, text);
+      if (score > bestScore) {
+        second = bestScore;
+        bestScore = score;
+        best = child;
+      } else if (score > second) {
+        second = score;
+      }
+    }
+    if (!best || bestScore < 0.2 || bestScore - second < 0.08) return '';
+    const name = best.subagentName || best.subagentLabel || best.shortId;
+    return ` [~${name}${ownerSuffix(best)}]`;
+  }
+
+  function renderTodos(entries, focus, offline) {
+    if (offline) {
+      toggleClass(todosPanel, 'is-off', true);
+      setText(todoProg, '');
+      return;
+    }
+
+    const tree = focusTree(entries, focus);
+    const children = tree.filter((entry) => entry.isSubagent);
+    const items = [];
+    for (const entry of tree) {
+      if (!Array.isArray(entry.todos)) continue;
+      for (const todo of entry.todos) items.push({ entry, todo });
+    }
+
+    toggleClass(todosPanel, 'is-off', items.length === 0);
+    const doneCount = items.filter((item) => item.todo.status === 'completed').length;
+    setText(todoProg, items.length > 0 ? `${doneCount}/${items.length} 已完成` : '');
+
+    const visible = items.slice(0, 8);
+    visible.forEach(({ entry, todo }, index) => {
+      let row = todoRows[index];
+      if (!row) {
+        row = createTodoRow();
+        todoRows.push(row);
+        todoList.appendChild(row);
+      }
+      const statusNode = row.querySelector('.todo-item-status');
+      const statusInfo = TODO_STATUS[todo.status] || TODO_STATUS.pending;
+      setText(statusNode, statusInfo.label);
+      setStyle(statusNode, 'color', statusInfo.color);
+      setStyle(statusNode, 'background', `color-mix(in srgb, ${statusInfo.color} 18%, transparent)`);
+      toggleClass(row, 'is-completed', todo.status === 'completed');
+
+      const text = row.querySelector('.todo-item-text');
+      setText(text, todo.content);
+      if (row.title !== todo.content) row.title = todo.content;
+
+      let owner = '';
+      if (entry.isSubagent) {
+        const name = entry.subagentName || entry.subagentLabel || entry.shortId;
+        owner = `[${name}]${ownerSuffix(entry)}`;
+      } else {
+        owner = inferOwner(todo.content, children);
+      }
+      setText(row.querySelector('.todo-item-owner'), owner);
+    });
+
+    for (let index = visible.length; index < todoRows.length; index += 1) {
+      todoRows[index].remove();
+    }
+    todoRows.length = visible.length;
+
+    const more = Math.max(0, items.length - visible.length);
+    setText(todoMore, more > 0 ? `还有 ${more} 条` : '');
+    toggleClass(todoMore, 'is-off', more === 0);
+  }
 
   function repaint() {
     const now = Date.now();
@@ -191,61 +513,52 @@
     island.dataset.expanded = ui.expanded ? '1' : '0';
     island.dataset.glow = config && config.glowEffect === false ? '0' : '1';
 
+    const selected = ui.offline ? null : pickSelected(entries);
     const focus = ui.offline ? null : pickFocus(entries);
+    const focusState = focus ? stateOf(focus) : null;
     const liveCount = entries.filter((entry) => entry.live === true).length;
-    const status = ui.offline ? 'offline' : focus ? (focus.stopped ? 'stopped' : focus.status) : 'idle';
+    const activeCount = entries.filter((entry) => entry.status === 'thinking' || entry.status === 'tool').length;
+    const status = ui.offline ? 'offline' : focusState ? focusState.status : 'idle';
     island.dataset.live = liveCount > 0 ? '1' : '0';
     island.dataset.status = status;
     // 有工作区标签时折叠态需要更宽，否则工作区与标题互相挤成残句。
     island.dataset.workspace = focus && focus.workspace ? '1' : '0';
 
-    const dotColour = ui.offline
-      ? P.STATUS_COLOR.idle
-      : focus
-        ? focus.glow || P.STATUS_COLOR[focus.status]
-        : P.STATUS_COLOR.idle;
+    const dotColour = ui.offline ? P.STATUS_COLOR.idle : focusState ? focusState.color : P.STATUS_COLOR.idle;
     setStyle(hDot, 'background', dotColour);
 
     // 折叠态 → 展开态共用的表头：标题 + 耗时（+ 还有几个在执行）
-    setText(
-      hBadge,
-      ui.offline ? BADGE.offline : focus && focus.stopped ? '已停止' : BADGE[status] || status.toUpperCase(),
-    );
+    setText(hBadge, ui.offline ? BADGE.offline : focusState ? focusState.text : BADGE.idle);
     const workspaceText = focus && focus.workspace ? `${focus.workspace} /` : '';
     setText(hWorkspace, workspaceText);
     const workspaceTitle = focus ? focus.workspacePath || focus.workspace || '' : '';
     if (hWorkspace.title !== workspaceTitle) hWorkspace.title = workspaceTitle;
 
-    setText(hTitle, ui.offline ? '未连接宿主' : focus ? focus.label : 'DSH 待命');
+    const title = ui.offline ? '未连接宿主' : focus ? displayName(focus) : 'DSH 待命';
+    setText(hTitle, title);
+    const titleTip = focus ? focus.subagentLabel || focus.subagentName || focus.label : '';
+    if (hTitle.title !== titleTip) hTitle.title = titleTip;
     const elapsed = ui.offline ? '' : elapsedOf(focus, now);
     setText(
       hElapsed,
-      elapsed === '' ? '' : liveCount > 1 ? `${elapsed} · +${liveCount - 1}` : elapsed,
+      elapsed === '' ? '' : activeCount > 1 ? `${elapsed} · +${activeCount - 1}` : elapsed,
     );
 
     const fraction =
       focus && Number.isFinite(focus.contextFraction) ? Math.max(0, Math.min(1, focus.contextFraction)) : null;
 
     // 具体过程只在会话行显示（`STATUS_LABEL`），展开态不再单独占一行。
-
-    // 待办
-    const todoText = ui.offline ? '' : focus && focus.todoText ? focus.todoText : '';
-    toggleClass(todo, 'is-off', todoText === '');
-    setText(todoCur, todoText);
-    setText(
-      todoProg,
-      focus && focus.todoTotal > 0 ? `${focus.todoDone}/${focus.todoTotal}` : '',
-    );
+    renderTodos(entries, focus, ui.offline);
+    renderSubagents(entries, focus, selected ? selected.id : null, ui.offline, now);
 
     if (ui.offline) {
       for (const [, row] of rows) row.remove();
       rows.clear();
+      renderRows(subagentList, subagentRows, [], now);
       setText(stats, '');
     } else {
-      // 表头已经代表当前会话；列表只列“其他会话”，避免同一行状态出现两遍。
-      const focusId = focus ? focus.id : null;
-      const otherEntries = focusId === null ? entries : entries.filter((entry) => entry.id !== focusId);
-      renderList(otherEntries, now);
+      // 表头承担根会话；子代理单独成组，其余根会话留在列表里。
+      renderList(buildTreeRows(entries, focus, selected ? selected.id : null, true), now);
 
       // 统计：轮次 / 工具 / 子代理 / 上下文 / 累计 token
       const parts = [];
@@ -261,7 +574,7 @@
       if (focus && Number.isFinite(focus.tokenTotal) && focus.tokenTotal > 0) {
         parts.push(`Token ${formatTokens(focus.tokenTotal)}`);
       }
-      if (liveCount > 1) parts.push(`执行中 ${liveCount}`);
+      if (activeCount > 1) parts.push(`执行中 ${activeCount}`);
       setText(stats, parts.join(' · '));
     }
 

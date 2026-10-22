@@ -364,6 +364,221 @@ test('累计 token 主数字含缓存读写，工作区来自 cwd 末段', async
   assert.equal(entry.workspacePath, 'D:\\work\\demo');
 });
 
+test('宿主富化子代理层级、名称、终态与完整待办', async (t) => {
+  const projections = {
+    snapshot: (session) => {
+      if (session.id === 'session-parent') {
+        return {
+          values: {
+            agentTeam: {
+              members: [
+                {
+                  id: 'session-child',
+                  name: 'jump-chain',
+                  description: '追踪仓库内跳转链路与最小化失败点（只读分析）',
+                  phase: 'active',
+                },
+              ],
+            },
+            todos: [{ content: 'T1', status: 'in_progress' }],
+          },
+        };
+      }
+      return {
+        values: {
+          subagent: { identity: { mode: 'continuable', label: '追踪仓库内跳转链路与最小化失败点（只读分析）' } },
+          subagentTiming: { lastTurnCompleted: true },
+          todos: [{ content: 'TA1', status: 'completed' }],
+        },
+      };
+    },
+  };
+  const host = await startHost({
+    agents: [
+      { id: 'session-parent', status: 'running' },
+      { id: 'session-child', status: 'running' },
+    ],
+    sessions: [
+      { id: 'session-parent', header: { cwd: 'D:\\work\\demo' } },
+      {
+        id: 'session-child',
+        header: { origin: 'subagent', parentSession: 'session-parent', cwd: 'D:\\work\\demo' },
+      },
+    ],
+    projections,
+  });
+  t.after(host.teardown);
+
+  const state = await waitFor(async () => {
+    const res = await request(host.port, 'GET', P.ROUTE.state);
+    const child = res.body.entries?.find((entry) => entry.id === 'session-child');
+    return child?.subagentName === 'jump-chain' ? res.body : null;
+  });
+
+  const parent = state.entries.find((entry) => entry.id === 'session-parent');
+  const child = state.entries.find((entry) => entry.id === 'session-child');
+  assert.equal(parent.subagentRunning, 1);
+  assert.equal(parent.subagentName, null, '主会话不能继承团队名单里的 lead');
+  assert.equal(child.parentId, 'session-parent');
+  assert.equal(child.isSubagent, true);
+  assert.equal(child.subagentName, 'jump-chain');
+  assert.equal(child.subagentLabel, '追踪仓库内跳转链路与最小化失败点（只读分析）');
+  assert.equal(child.subagentState, 'finished');
+  assert.deepEqual(parent.todos, [{ content: 'T1', status: 'in_progress' }]);
+  assert.deepEqual(child.todos, [{ content: 'TA1', status: 'completed' }]);
+});
+
+test('subagentCatalog 能补回非 team 模式的子代理层级', async (t) => {
+  const projections = {
+    snapshot: (session) =>
+      session.id === 'session-catalog-parent'
+        ? {
+            values: {
+              subagentCatalog: [
+                { id: 'child-1', createdAt: 0, mode: 'continuable', label: '生成 rules.json' },
+              ],
+            },
+          }
+        : { values: {} },
+  };
+  const host = await startHost({
+    agents: [{ id: 'session-catalog-parent', status: 'idle' }],
+    sessions: [{ id: 'session-catalog-parent', header: { cwd: 'D:\\work\\demo' } }],
+    projections,
+  });
+  t.after(host.teardown);
+
+  const state = await waitFor(async () => {
+    const res = await request(host.port, 'GET', P.ROUTE.state);
+    return res.body.entries?.find((entry) => entry.id === 'child-1') ? res.body : null;
+  });
+
+  const parent = state.entries.find((entry) => entry.id === 'session-catalog-parent');
+  const child = state.entries.find((entry) => entry.id === 'child-1');
+  assert.equal(child.isSubagent, true);
+  assert.equal(child.subagentLabel, '生成 rules.json');
+  assert.equal(String(child.parentId).replace(/^session-/, ''), String(parent.id).replace(/^session-/, ''));
+});
+
+test('主会话 ack 后不再从投影回填待办与子代理', async (t) => {
+  const projections = {
+    snapshot: (session) =>
+      session.id === 'session-ack-parent'
+        ? {
+            values: {
+              todos: [{ content: '完成主任务', status: 'completed' }],
+              subagentCatalog: [{ id: 'ack-child', createdAt: 0, mode: 'continuable', label: '子任务' }],
+            },
+          }
+        : { values: {} },
+  };
+  const host = await startHost({
+    agents: [{ id: 'session-ack-parent', status: 'running' }],
+    sessions: [{ id: 'session-ack-parent', header: { cwd: 'D:\\work\\demo' } }],
+    projections,
+  });
+  t.after(host.teardown);
+
+  await waitFor(async () => {
+    const res = await request(host.port, 'GET', P.ROUTE.state);
+    const parent = res.body.entries?.find((entry) => entry.id === 'session-ack-parent');
+    const child = res.body.entries?.find((entry) => entry.id === 'ack-child');
+    return parent?.todos?.length === 1 && child ? res.body : null;
+  });
+
+  host.fake.emit('agent/status', { agent: { id: 'session-ack-parent' }, status: 'idle' });
+  await waitFor(async () => {
+    const res = await request(host.port, 'GET', P.ROUTE.state);
+    return res.body.entries?.find((entry) => entry.id === 'session-ack-parent')?.status === 'done' ? res.body : null;
+  });
+
+  const headers = { [P.NOTCH_HEADER]: P.NOTCH_HEADER_VALUE };
+  const ack = await request(host.port, 'POST', P.ROUTE.ack, {
+    body: { sessionId: 'session-ack-parent' },
+    headers,
+  });
+  assert.equal(ack.status, 200);
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const state = await request(host.port, 'GET', P.ROUTE.state);
+  const parent = state.body.entries.find((entry) => entry.id === 'session-ack-parent');
+  assert.deepEqual(parent.todos, [], 'ack 后待办保持清空');
+  assert.equal(
+    state.body.entries.some((entry) => entry.id === 'ack-child'),
+    false,
+    'ack 后子代理不能从 catalog 重新长出来',
+  );
+});
+
+test('子会话不在 sessions.list 时用 agent.session 补父子并建父占位', async (t) => {
+  const host = await startHost({
+    agents: [
+      {
+        id: 'session-orphan-child',
+        status: 'idle',
+        session: {
+          id: 'session-orphan-child',
+          header: { origin: 'subagent', parentSession: 'session-orphan-parent' },
+          events: [],
+        },
+      },
+    ],
+    sessions: [],
+  });
+  t.after(host.teardown);
+
+  const state = await waitFor(async () => {
+    const res = await request(host.port, 'GET', P.ROUTE.state);
+    const child = res.body.entries?.find((entry) => entry.id === 'session-orphan-child');
+    const parent = res.body.entries?.find((entry) => entry.id === 'session-orphan-parent');
+    return child?.parentId && parent ? res.body : null;
+  });
+
+  const child = state.entries.find((entry) => entry.id === 'session-orphan-child');
+  assert.equal(child.isSubagent, true);
+  assert.equal(String(child.parentId).replace(/^session-/, ''), 'orphan-parent');
+});
+
+test('父会话不活跃但仍在 sessions.list 时，父行同一拍就带标题与工作区', async (t) => {
+  const host = await startHost({
+    agents: [
+      {
+        id: 'session-early-child',
+        status: 'idle',
+        session: {
+          id: 'session-early-child',
+          header: { origin: 'subagent', parentSession: 'session-quiet-parent' },
+          events: [],
+        },
+      },
+    ],
+    // 左栏里一直挂着的会话：不活跃、不会发事件，但 sessions.list 里有它。
+    sessions: [
+      {
+        id: 'session-quiet-parent',
+        header: { cwd: 'D:/work/quiet-parent-app', createdAt: 1700000000000 },
+        events: [],
+      },
+    ],
+  });
+  t.after(host.teardown);
+
+  // 关键：父子**第一次同框**的那张快照里，父行就必须是完整的。
+  // 先建空占位、等下一拍再补的话，这里会拿到 label 为 null 的父行。
+  const first = await waitFor(async () => {
+    const res = await request(host.port, 'GET', P.ROUTE.state);
+    const child = res.body.entries?.find((entry) => entry.id === 'session-early-child');
+    if (!child?.parentId) return null;
+    const parent = res.body.entries?.find((entry) => entry.id === 'session-quiet-parent');
+    return { child, parent };
+  });
+
+  assert.ok(first.parent, '父条目应在子代理挂上父 id 的同一拍出现，而不是等下一拍');
+  assert.equal(first.parent.label, 'quiet-parent-app', '父行标题来自会话库（title 缺席时回退 cwd 末段）');
+  assert.equal(first.parent.workspace, 'quiet-parent-app');
+  assert.equal(first.parent.workspacePath, 'D:/work/quiet-parent-app');
+});
+
 test('配置写入走 settings，并出现在状态与 commands 里', async (t) => {
   const settings = fakeSettings();
   const host = await startHost({ settings });

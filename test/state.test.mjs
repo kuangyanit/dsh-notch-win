@@ -326,6 +326,178 @@ test('meta 回填工作区名与完整路径，超长名截断', () => {
   assert.equal(entry.workspacePath, 'D:\\software\\opendocde\\p4\\dsh-notch-win', '空路径不覆盖旧值');
 });
 
+test('meta 回填子代理层级、名称与完整待办', () => {
+  const state = createState();
+  ingest(
+    state,
+    {
+      kind: 'meta',
+      sessionId: 'session-child',
+      parentId: 'session-parent',
+      isSubagent: true,
+      subagentName: 'jump-chain',
+      subagentLabel: '追踪仓库内跳转链路与最小化失败点（只读分析）',
+      subagentState: 'running',
+      todos: [
+        { content: '阅读 app.asar 入口', status: 'in_progress' },
+        { content: '汇总证据', status: 'pending' },
+      ],
+    },
+    T0,
+  );
+  const entry = snapshot(state).entries.find((item) => item.id === 'session-child');
+  assert.equal(entry.parentId, 'session-parent');
+  assert.equal(entry.isSubagent, true);
+  assert.equal(entry.subagentName, 'jump-chain');
+  assert.equal(entry.subagentLabel, '追踪仓库内跳转链路与最小化失败点（只读分析）');
+  assert.equal(entry.subagentState, 'running');
+  assert.equal(entry.todos.length, 2);
+  assert.equal(entry.todoTotal, 2);
+  assert.equal(entry.todoText, '阅读 app.asar 入口');
+});
+
+test('turn/start 清空上一轮待办', () => {
+  const state = createState();
+  ingest(state, status('s1', 'running'), T0);
+  ingest(
+    state,
+    sessionEvent(
+      's1',
+      'todo/write',
+      { todos: [{ content: 'T1', status: 'in_progress' }, { content: 'T2', status: 'completed' }] },
+      1,
+    ),
+    T0 + 10,
+  );
+  assert.equal(snapshot(state).entries[0].todos.length, 2);
+
+  ingest(state, sessionEvent('s1', 'turn/start', { turn: 2 }, 2), T0 + 20);
+  const [entry] = snapshot(state).entries;
+  assert.equal(entry.todos.length, 0);
+  assert.equal(entry.todoTotal, 0);
+  assert.equal(entry.todoText, null);
+});
+
+test('焦点使用裸 uuid 时复用已有 session- 条目', () => {
+  const state = createState();
+  ingest(
+    state,
+    { kind: 'meta', sessionId: 'session-child', parentId: 'session-parent', isSubagent: true, subagentName: 'jump-chain' },
+    T0,
+  );
+  ingest(state, { kind: 'focus', sessionId: 'child' }, T0 + 10);
+  const snapshotState = snapshot(state);
+  assert.equal(snapshotState.primaryId, 'session-child');
+  assert.equal(snapshotState.entries.length, 1, '不能为同一个 uuid 复制出顶级条目');
+});
+
+test('subagent-settled 标记终态，disposed 后保留，父 ack 清理', () => {
+  const state = createState();
+  ingest(state, status('session-parent', 'running'), T0);
+  ingest(
+    state,
+    {
+      kind: 'meta',
+      sessionId: 'session-child',
+      parentId: 'session-parent',
+      isSubagent: true,
+      subagentName: 'jump-chain',
+    },
+    T0 + 5,
+  );
+
+  ingest(
+    state,
+    sessionEvent(
+      'session-parent',
+      'user/message',
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Background subagent child finished and will do no further work.' }],
+        source: {
+          kind: 'subagent-settled',
+          form: 'notice',
+          senderSessionId: 'child',
+          summary: 'Background subagent child finished and will do no further work.',
+        },
+      },
+      1,
+    ),
+    T0 + 10,
+  );
+
+  let child = snapshot(state).entries.find((entry) => entry.id === 'session-child');
+  assert.equal(child.subagentState, 'finished');
+  assert.equal(child.status, 'done');
+  assert.ok(child.retainedUntil > T0);
+
+  ingest(state, { kind: 'disposed', agentId: 'session-child' }, T0 + 20);
+  child = snapshot(state).entries.find((entry) => entry.id === 'session-child');
+  assert.ok(child, '子代理停止后不能立即从列表消失');
+  assert.equal(child.subagentState, 'finished');
+
+  ingest(
+    state,
+    sessionEvent('session-parent', 'todo/write', { todos: [{ content: 'T1', status: 'completed' }] }, 2),
+    T0 + 25,
+  );
+  ingest(
+    state,
+    { kind: 'meta', sessionId: 'session-child2', parentId: 'session-parent', isSubagent: true, subagentName: 'other' },
+    T0 + 26,
+  );
+  ingest(state, status('session-parent', 'idle'), T0 + 30);
+  ingest(state, { kind: 'ack', sessionId: 'session-parent' }, T0 + 40);
+  const afterAck = snapshot(state);
+  assert.equal(
+    afterAck.entries.some((entry) => entry.id === 'session-child'),
+    false,
+    '父会话 ack 后清理终态子代理',
+  );
+  assert.equal(
+    afterAck.entries.some((entry) => entry.id === 'session-child2'),
+    false,
+    '父会话 ack 后清理未标记终态的子代理行',
+  );
+  assert.deepEqual(
+    afterAck.entries.find((entry) => entry.id === 'session-parent').todos,
+    [],
+    '父会话 ack 后清空待办',
+  );
+  assert.equal(state.sessions.get('session-parent').acked, true);
+});
+
+test('subagent-settled 的 stopped 摘要不能被 finished 误判', () => {
+  const state = createState();
+  ingest(state, status('session-parent', 'running'), T0);
+  ingest(
+    state,
+    { kind: 'meta', sessionId: 'session-child', parentId: 'session-parent', isSubagent: true, subagentName: 'dsh-runtime' },
+    T0 + 5,
+  );
+  ingest(
+    state,
+    sessionEvent(
+      'session-parent',
+      'user/message',
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Background subagent child was stopped before it finished.' }],
+        source: {
+          kind: 'subagent-settled',
+          form: 'notice',
+          senderSessionId: 'child',
+          summary: 'Background subagent child was stopped before it finished.',
+        },
+      },
+      1,
+    ),
+    T0 + 10,
+  );
+  const child = snapshot(state).entries.find((entry) => entry.id === 'session-child');
+  assert.equal(child.subagentState, 'stopped');
+});
+
 test('标题三级回落：cwd 先到，首条用户消息后来居上', () => {
   const state = createState();
   ingest(state, status('s1', 'running'), T0);
@@ -397,7 +569,7 @@ test('没有标题时回落到 shortId', () => {
   assert.equal(shortId('ses_xyz'), 'ses_xyz');
 });
 
-test('排序：正在干活的优先，其次主会话，最后最近更新；上限 8 条', () => {
+test('排序：正在干活的优先，其次主会话，最后最近更新；上限按 MAX_ENTRIES', () => {
   const state = createState();
   ingest(state, status('idle-a', 'running'), T0);
   ingest(state, status('idle-b', 'running'), T0);
@@ -409,7 +581,7 @@ test('排序：正在干活的优先，其次主会话，最后最近更新；�
   assert.deepEqual(entries.map((e) => e.id), ['idle-b', 'idle-a', 'done-a']);
   assert.equal(snapshot(state).primaryId, 'idle-b');
 
-  for (let i = 0; i < 12; i += 1) ingest(state, status(`extra-${i}`, 'running'), T0);
+  for (let i = 0; i < 70; i += 1) ingest(state, status(`extra-${i}`, 'running'), T0);
   assert.equal(snapshot(state).entries.length, P.MAX_ENTRIES);
 });
 
@@ -450,6 +622,22 @@ test('disposed 移除条目并清掉焦点', () => {
   assert.equal(ingest(state, { kind: 'disposed', agentId: 's1' }), false);
 });
 
+test('父会话 disposed 时若还有子代理，保留父占位而不是删掉', () => {
+  const state = createState();
+  ingest(state, status('parent', 'running'), T0);
+  ingest(
+    state,
+    { kind: 'meta', sessionId: 'child', parentId: 'parent', isSubagent: true, subagentName: 'jump-chain' },
+    T0 + 5,
+  );
+  ingest(state, { kind: 'disposed', agentId: 'parent' }, T0 + 10);
+
+  const entries = snapshot(state).entries;
+  assert.ok(entries.some((entry) => entry.id === 'parent'), '父占位必须保留');
+  assert.equal(entries.find((entry) => entry.id === 'parent').status, 'idle');
+  assert.ok(entries.some((entry) => entry.id === 'child'));
+});
+
 test('陈旧的空闲条目会被回收，live 条目永不回收', () => {
   const state = createState();
   ingest(state, status('live', 'running'), T0);
@@ -458,6 +646,21 @@ test('陈旧的空闲条目会被回收，live 条目永不回收', () => {
 
   const ids = snapshot(state).entries.map((e) => e.id);
   assert.deepEqual(ids, ['live']);
+});
+
+test('有空闲子代理时父会话不会被单独回收', () => {
+  const state = createState();
+  ingest(state, { kind: 'meta', sessionId: 'parent', workspace: 'demo' }, T0);
+  ingest(
+    state,
+    { kind: 'meta', sessionId: 'child', parentId: 'parent', isSubagent: true, subagentName: 'jump-chain' },
+    T0 + P.EVICT_IDLE_MS + 5,
+  );
+  tick(state, T0 + P.EVICT_IDLE_MS + 10);
+
+  const ids = snapshot(state).entries.map((entry) => entry.id);
+  assert.ok(ids.includes('parent'), '父会话不能先于子代理被回收');
+  assert.ok(ids.includes('child'));
 });
 
 test('summarizeCall 只取一个参数值并截断', () => {

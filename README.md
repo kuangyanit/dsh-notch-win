@@ -1,8 +1,8 @@
 # dsh-notch-win
 
-Windows 端 DSH 灵动岛：一个浮在所有窗口之上的状态岛（闲置时是一条胶囊，悬停展开成 HUD），显示 agent 的执行状态、工作区、工具、上下文占用、累计 Token、子代理与待办；点岛上任一会话可让 DSH 切过去。
+Windows 端 DSH 灵动岛：一个浮在所有窗口之上的状态岛（闲置时是一条胶囊，悬停展开成 HUD），显示 agent 的执行状态、工作区、工具、上下文占用、累计 Token、子代理层级与聚合待办；点岛上任一会话可让 DSH 切过去。
 
-> **当前状态：代码完成、单测 118/118 全绿。宿主半边已在 DSH `0.2.1-rc.2` 的真实
+> **当前状态：代码完成、单测 130/130 全绿。宿主半边已在 DSH `0.2.1-rc.2` 的真实
 > cordis 4.0.5 / schemastery 3.18.5 组合下验证：能加载、能写 `host.log`、能拉起
 > `DSHNotch.exe`（重启 DSH 后生效）。渲染半边（设置页）的 0.2.x 适配仍未做，见
 > 「已知限制」R8/R9。**
@@ -193,7 +193,7 @@ app 侧也顺手修了一个同类静默退出：`app.setPath('userData', …)` 
 
 ```powershell
 cd <本仓库路径>
-npm test                 # node --test "test/**/*.test.mjs"，118 项
+npm test                 # node --test "test/**/*.test.mjs"，130 项
 npm run gen-protocol     # lib/protocol.js → app/src/protocol.cjs
 npm run check-protocol   # 断言生成物与源文件字节一致（CI 用）
 ```

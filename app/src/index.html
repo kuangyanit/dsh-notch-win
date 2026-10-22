@@ -56,13 +56,33 @@
         </div>
 
         <div class="hud">
-          <div id="todo" class="todo">
-            <span class="todo-ico" aria-hidden="true"></span>
-            <span id="todo-cur" class="cur"></span>
-            <span id="todo-prog" class="prog mono"></span>
-          </div>
+          <!-- 表头以下整块滚动：滚动条以「当前会话」为基准，从表头下沿开始，
+               而不是只罩住下面的会话列表（那样会横在 HUD 中间）。 -->
+          <div class="hud-scroll">
+            <div id="todos" class="todos">
+              <div class="todos-head">
+                <svg class="todo-ico" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M3 4.5l1 1 2-2M3 9l1 1 2-2M9 5h4M9 9.5h4M3 13.5h10"
+                        fill="none" stroke="currentColor" stroke-width="1.2"
+                        stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="todo-label">待办</span>
+                <span id="todo-prog" class="todos-title"></span>
+              </div>
+              <div id="todo-list" class="todo-list"></div>
+              <div id="todo-more" class="todo-more mono"></div>
+            </div>
 
-          <div id="list" class="list"></div>
+            <div id="subagents" class="subagents">
+              <div class="subagents-head">
+                <span class="group-label">子代理</span>
+                <span id="subagent-count" class="group-count mono"></span>
+              </div>
+              <div id="subagent-list" class="subagent-list"></div>
+            </div>
+
+            <div id="list" class="list"></div>
+          </div>
 
           <div id="stats" class="stats"></div>
 

@@ -4,7 +4,7 @@
 | :--- | :--- |
 | 目标产物 | Windows 端 DSH 灵动岛（插件 + 桌面 app） |
 | 包名 / 插件 id / settings namespace | `@dsh-external/dsh-notch-win` / `dsh-notch-win` / `dsh-notch-win` |
-| 状态 | 代码完成（单测 118/118 全绿）；真机显示、穿透与跳转已验证 |
+| 状态 | 代码完成（单测 130/130 全绿）；真机显示、穿透与跳转已验证 |
 | 平台 | Windows only（macOS 明确不做；Swift 端不纳入本仓库） |
 
 ---
@@ -304,7 +304,7 @@ primaryId                          // 渲染半边上报的"当前会话"
 ```
 
 - `idle` 的条目**不参与** HUD 列表（除非 `hideWhenIdle=false` 且用户想看历史 → 由 app 侧决定，宿主照样把 `idle` 条目发出去但排在后面）。
-- 条目上限 `MAX_ENTRIES = 8`，排序：`running` 优先 → `primaryId` 优先 → `updatedAt` 倒序。
+- 条目上限 `MAX_ENTRIES = 64`（与 `SESSION_MAP_MAX` 对齐），排序：`running` 优先 → `primaryId` 优先 → `updatedAt` 倒序。
 
 ### 7.5 采纳扫描（adoption sweep）
 
@@ -324,7 +324,7 @@ for (const agent of ctx.agents.list()) {          // Agent[]，见 §15
 - **标题**（优先级从高到低，前一级拿不到才往下走）：① DSH 会话标题（`session/title` 事件，或富化时读 `sessionTitle.get(session).title`，`labelSource:"title"`）→ ② 首条 `user/message` 的文本（截 40 字，`labelSource:"message"`）→ ③ `header.cwd` 的最后一段路径名（`C:\work\acme-api` → `acme-api`，`labelSource:"cwd"`）→ ④ `shortId`（前 8 位）。带 `labelSource` 是为了"只许升级不许降级"：DSH 标题可以盖掉消息/目录名，后来的 `user/message` 可以盖掉目录名兜底，反过来都不行。**标题缺失不影响功能** —— 但这是整条链里最容易"什么都对就是名字不对"的一环，所以设置页把 `label` 直接显示出来便于核对。
 
 - 已在跑的会话补 `elapsedFrom = now`（精确起点不可得，标注为近似）。
-- 内存不无界增长：`EVICT_IDLE_MS = 600000`（10 分钟没动过的 **idle** 条目回收；`live` 条目**永不**回收）、`SESSION_MAP_MAX = 64`（兜底上限，超了先淘汰最旧的 idle）。
+- 内存不无界增长：`EVICT_IDLE_MS = 600000`（10 分钟没动过的 **idle** 根会话按**整棵树**回收；`live` 条目与 primary 所在树**永不**回收；子代理不会先于父会话单独消失）、`SESSION_MAP_MAX = 64`（兜底上限，超了先淘汰最旧的整棵树）。`MAX_ENTRIES` 与 `SESSION_MAP_MAX` 对齐，避免 DTO 截断出“半棵树”。
 
 ### 7.6 计算与发布（**没有定时器**）
 
@@ -573,15 +573,22 @@ ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register(
 ### 9.3 渲染层字段裁剪
 
 - 宿主 `status` 仍是 **4 值**：`idle | thinking | tool | done`；岛的 `data-status` 额外用 `stopped`（done 且用户主动停止）和 `offline` 做配色。`waiting`（等待用户确认）砍掉 —— 需要额外的 approval 钩子才能可靠推断。
-- 折叠态与展开态**共用同一行表头**（状态点 + 徽标 + 标题 + 耗时），折叠时只多一条可选的上下文百分比；不再有两套内容。
-- 会话行与表头同一套顺序：状态点 → 中文状态徽标 → 标题 → 副信息 → 耗时；行右侧只放耗时，状态不再放在末尾。
+- 折叠态与展开态**共用同一行表头**（状态点 + 徽标 + 标题 + 耗时）；表头始终代表当前会话树的**根会话**，点击子代理只跳转，不改变主会话文案。
+- 会话行与表头同一套顺序：层级枝 → 状态点 → 中文状态徽标 → 工作区 → 标题 → 副信息 → 当前 → 耗时；右侧只放耗时。被选中的子代理行保留自己的状态徽标，并额外显示 `当前` 胶囊。
+- 一个会话同时有待办和子代理时，HUD 分成两个组：`待办`（聚合当前树的 todos）与 `子代理 N`（当前根会话的直接子代理）。子代理不再混在“其他会话”列表里；其他根会话仍在下方列表。
+- **表头以下的整块内容共用一个滚动条**（`.hud-scroll`：待办 + 子代理 + 其他会话），滚动条以表头那个会话为基准、从表头下沿开始；待办组、子代理组、会话列表都**不再各自** `max-height + overflow`（否则会出现两条互不对齐的滚动条，其中一条横在 HUD 中间）。`MAX_ENTRIES` 与 `SESSION_MAP_MAX` 对齐，避免 DTO 先截断出半棵树。
+- 子代理行缩进在组内（`├` / `└`），不再作为顶级会话；根列表把 primary 所属的根排在最前；兄弟顺序按 `createdAt` 固定，primary 只负责高亮，不参与排序。
+- **父条目未知时就地 hydrate**：子代理的 `parentSession` 指向的会话即使不活跃、不发事件，也还在 `sessions.list()` 里。宿主在拿到子代理 `parentId` 的**同一拍**调 `hydrateSession()`，用 `sessions.get` / `agents.get().session` 取到会话，一条 meta 补全标题（`sessionTitle` → cwd 末段）、工作区、`createdAt`、父级链（父自己也是子代理时递归，最多 8 层）；只有库里真的查不到（被删 / 服务不可用）才退化成空占位。**不允许**"先建空占位、等下一拍 enrich 轮到它再补"——那会先闪一行没有标题的空行，而且那一拍 `sessions` 服务取不到就永远空着。
+- **渲染半边兜底**：`buildTreeRows` 里 `parentId` 解析不到的条目**不进 roots**。根会话照常平铺；这类子代理统一收进末尾的 `父会话未加载` 组（组标题不是会话：不挂状态点/徽标、不可点击），组内仍按 `createdAt` 排序。宁可集中标注，也不能让子代理顶着"已完成/已停止"冒充顶级会话。
+- 待办组汇总当前树（父 + 子代理）的完整 `todos`，每项带状态徽标；徽标与汇总文案沿用 DSH 自己的实现（`0/4 已完成`、`已完成` / `进行中` / `待处理`，success / info / warning 三色）。子代理自己写的待办带 `[子代理名]`，子代理完成/停止时标签追加 `✓` / `已停止`。父会话待办只在文本与子代理描述高置信度匹配时显示 `[~子代理名]`；`~` 表示推断，且不修改 todo 状态。
+- 子代理完成/停止后保留终态行，直到父会话 ack/下一轮或 5 分钟超时；终态行仍可点击跳转。父会话 ack 时**清空待办并移除该父会话下所有子代理行**，同时在 `turn/start` 或新 `todo/write` 之前抑制投影回填，避免下一拍又长回来。父会话被 `agent/disposed` 时只要还挂着子代理行，就保留 idle 占位而不是直接删除。
 - 岛上没有单独的"详情"行：过程只在表头徽标和会话行徽标显示；`detailText` 仍保留在快照里供设置页/诊断，不在岛上显示。
-- 统计一行：**轮次 / 工具 / 子代理 / 上下文 / Token**，另加"执行中 N"（多会话时）；Token 的悬浮明细给未缓存输入、输出、缓存命中（缓存写入非 0 时才出现）。
+- 统计一行：**轮次 / 工具 / 子代理 / 上下文 / Token**，另加"执行中 N"（只数 thinking/tool，不把保留的终态行算进去）；Token 的悬浮明细给未缓存输入、输出、缓存命中（缓存写入非 0 时才出现）。
 - 页脚：左侧"通道状态"（`宿主进程 … · 端口 …` 或"未连接"），右侧操作提示 / 跳转回执 / `保持展开` 开关。
-- 面板级「保持展开」在页脚；表头是当前会话摘要，平时不可点，**已完成/已停止时可点确认（ack）**。展开时列表只列**其他会话**（当前会话在表头），避免同一行状态出现两遍。
+- 面板级「保持展开」在页脚；表头是当前会话摘要，平时不可点，**已完成/已停止时可点确认（ack）**。
 - 耗时**本地按秒走字**（`elapsedFrom` + `Date.now()`），不为了刷新一个秒数去求宿主多发一拍。
 - HUD 只保留表头、待办、会话列表、统计与页脚；通道状态统一放在页脚左侧。
-- 表头与会话行在标题前显示工作区（`header.cwd` 末段）弱化前缀；折叠态同样显示，宽度不足时胶囊自适应加宽。
+- 表头与会话行在标题前显示工作区（`header.cwd` 末段）弱化前缀；子代理没有自己的 cwd 时沿用父会话工作区；折叠态同样显示。
 
 ---
 
@@ -621,10 +628,17 @@ ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register(
     "toolName": "str_replace_editor",   // string | null
     "toolCount": 7,
     "subagentRunning": 2,
+    "parentId": "session-parent" | null,   // 子代理的父会话；根会话为 null
+    "isSubagent": false,
+    "subagentName": "jump-chain" | null,  // 团队短名
+    "subagentLabel": "追踪仓库内跳转链路…" | null, // 子代理长名
+    "subagentState": "running|finished|stopped|failed" | null,
+    "retainedUntil": 0 | null,     // 终态子代理行的回收时间
     "contextTokens": 53760,        // 已用 prompt tokens（input + cache 读写）
     "contextLimit": 128000,        // 模型上下文窗口 | null
     "contextFraction": 0.42,       // 0..1 | null（分母未知时 null，岛退化为显示 contextTokens）
     "todoTotal": 5, "todoDone": 2, "todoText": "写状态机单测",
+    "todos": [{ "content": "写状态机单测", "status": "in_progress" }], // 当前轮次完整列表
     "detailText": "str_replace_editor · lib/state.js"   // ≤120 字符，单行
   }]
 }
@@ -708,7 +722,7 @@ dsh-notch-win/
 | **P5 收口** | 真机跑一遍、目测 UI、README | ✅ 岛本体已验证：显示、工作区与 Token 统计、穿透、点击跳转；设置页观感受 R9 限制 |
 | **P6 端到端宿主测试** | 假 cordis ctx + 真回环 HTTP，跑完整生命周期 | ✅ `test/host.test.mjs` 全绿 |
 
-**当前：`npm test` 118 项全绿。**
+**当前：`npm test` 130 项全绿。**
 
 剩余工作集中在 R9 的渲染半边 0.2.x 适配（设置 tab）；宿主、岛本体、跳转与统计均已真机验证。
 
@@ -716,7 +730,7 @@ dsh-notch-win/
 
 ## 13. 测试与验收
 
-**单元 / 契约（`npm test` = `node --test "test/**/*.test.mjs"`，共 118 项）**
+**单元 / 契约（`npm test` = `node --test "test/**/*.test.mjs"`，共 130 项）**
 
 - `state.test.mjs`：喂一串合成事件（含乱序 `seq` 回退、`tool/call` 无 `result`、`turn/end` 后 agent 仍 running、畸形负载），断言快照与 `rev` 稳定性；另覆盖工作区字段与累计 token 的回填/裁剪。
 - `server.test.mjs`：Host 栅栏（`Host: evil.com` → 403）、Origin 回显（`null` 与回环过、跨站 403）、`X-Notch` 缺失 → 403、PNA 预检头、`rev` 短路 → `unchanged:true`、ring 的 cap/TTL/去重、只绑 `127.0.0.1`。

@@ -141,6 +141,7 @@ body {
 .body {
   display: flex;
   flex-direction: column;
+  max-height: 452px;
   padding: 0 12px;
 }
 
@@ -228,7 +229,9 @@ body {
 
 .hud {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+  min-height: 0;
   gap: 8px;
   padding-bottom: 10px;
 }
@@ -237,45 +240,143 @@ body {
   display: none !important;
 }
 
-.todo {
+/* 表头以下的唯一滚动容器：滚动条从这里开始，基准是顶部那个会话。
+   里面各项不再各自 max-height + overflow，避免出现两条互不对齐的滚动条。 */
+.hud-scroll {
   display: flex;
-  align-items: baseline;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
   gap: 8px;
+  overflow-y: auto;
+  /* 给状态点的 3px 外圈留出裁剪空间；负 margin 保持行内容与表头对齐。 */
+  padding: 0 3px;
+  margin: 0 -3px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(242, 244, 248, 0.22) transparent;
+}
+
+.todos {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
   color: rgba(242, 244, 248, 0.82);
-  font-size: 12px;
+  font-size: 11.5px;
+}
+
+.todos-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-label {
+  flex: none;
+  color: rgba(242, 244, 248, 0.82);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.todos-title {
+  flex: none;
+  color: rgba(242, 244, 248, 0.7);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .todo-ico {
   flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  border: 1.5px solid var(--accent);
-  align-self: center;
+  width: 12px;
+  height: 12px;
+  color: rgba(242, 244, 248, 0.55);
 }
 
-.todo .cur {
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.todo-item-status {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.todo-item-text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  color: rgba(242, 244, 248, 0.78);
 }
 
-.todo .prog {
+.todo-item-owner {
   flex: none;
-  color: rgba(242, 244, 248, 0.62);
+  color: rgba(242, 244, 248, 0.5);
+  font-size: 10px;
+}
+
+.todo-item.is-completed .todo-item-text {
+  color: rgba(242, 244, 248, 0.45);
+}
+
+.todo-more {
+  padding-left: 16px;
+  color: rgba(242, 244, 248, 0.45);
+  font-size: 10px;
+}
+
+.subagents {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.subagents-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(242, 244, 248, 0.82);
+}
+
+.group-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.group-count {
+  color: rgba(242, 244, 248, 0.5);
+  font-size: 10px;
+}
+
+.subagent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .list {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 216px;
-  overflow: hidden;
-  /* 给状态点的 3px 外圈留出裁剪空间；负 margin 保持行内容与表头对齐。 */
-  padding: 0 3px;
-  margin: 0 -3px;
 }
 
 .row {
@@ -292,6 +393,52 @@ body {
 
 .row:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* 焦点是子代理时，它仍留在父级树里，用左侧细条 + 底色 + “当前”标记。 */
+.row[data-current='1'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.row[data-current='1']:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.row-current {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 子代理层级：枝 + 左缩进；hover 背景仍覆盖整行。 */
+.row-branch {
+  flex: none;
+  width: 10px;
+  text-align: center;
+  color: rgba(242, 244, 248, 0.42);
+  font-size: 10px;
+}
+
+.row-branch:empty {
+  display: none;
+}
+
+.row[data-depth='1'] {
+  padding-left: 18px;
+}
+
+.row[data-depth='2'] {
+  padding-left: 32px;
+}
+
+.row[data-depth='3'] {
+  padding-left: 46px;
 }
 
 /* 行和表头同一套结构：dot → 状态徽标 → 工作区 → 标题 → 副信息 → 耗时。 */
@@ -315,6 +462,20 @@ body {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-weight: 600;
+}
+
+/* 「父会话未加载」组标题：不是会话，弱化成说明文字，别和会话行抢层级。 */
+.row[data-group='1'] {
+  cursor: default;
+}
+
+.row[data-group='1'] .row-label {
+  font-weight: 500;
+  color: rgba(242, 244, 248, 0.55);
+}
+
+.row[data-group='1'] .dot {
+  opacity: 0.35;
 }
 
 .row-sub {
